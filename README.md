@@ -64,6 +64,16 @@ TOOLBOX_DOCKER=1 /usr/local/bin/toolbox-entrypoint /path/to/your-ci-runner
 
 The image includes tools, not a CI runner agent. Your launcher must supply the runner command and any registration credentials. The sandbox must provide a Docker-capable kernel, networking and cgroup access. A full sandbox microVM can run Docker without a separate privileged DinD service; an ordinary container generally needs `--privileged` to run its own daemon. Use only isolated, disposable CI environments for this mode. Docker data and layer caches are local to that environment.
 
+When running the toolbox inside an ordinary Docker container, give `/var/lib/docker` its own volume to avoid nested overlay-filesystem failures:
+
+```bash
+docker run --rm --privileged --volume /var/lib/docker \
+  -e TOOLBOX_DOCKER=1 azure-iac-toolbox:local \
+  bash -c 'docker run --rm hello-world'
+```
+
+The anonymous volume is removed with the container. A microVM with its own writable filesystem does not need this outer-container mount.
+
 Daemon startup is disabled by default. For an external engine, leave `TOOLBOX_DOCKER` unset and provide `DOCKER_HOST` or mount a Docker socket. A mounted socket grants control of its host. Local startup reuses an already-ready local daemon without stopping it; it rejects a remote `DOCKER_HOST` and clears Docker context/TLS client overrides.
 
 After startup, validate in the sandbox:

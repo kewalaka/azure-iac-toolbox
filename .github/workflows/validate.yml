@@ -56,7 +56,7 @@ jobs:
         id: smoke
         run: |
           docker run --rm azure-iac-toolbox:ci toolbox-check
-          docker run --rm --privileged -e TOOLBOX_DOCKER=1 azure-iac-toolbox:ci \
+          docker run --rm --privileged --volume /var/lib/docker -e TOOLBOX_DOCKER=1 azure-iac-toolbox:ci \
             bash -euc 'docker run --rm hello-world && printf "FROM hello-world\n" | docker buildx build --load -t toolbox-smoke -'
       - name: Scan OS and application dependencies
         id: scan
