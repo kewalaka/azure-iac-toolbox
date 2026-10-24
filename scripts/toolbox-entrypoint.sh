@@ -25,8 +25,8 @@ fi
 log=$(mktemp /tmp/toolbox-dockerd.XXXXXX)
 daemon_pid=
 command_pid=
-# Invoked by the EXIT trap.
-# shellcheck disable=SC2329
+# Invoked by the EXIT trap after the exec-only paths above.
+# shellcheck disable=SC2317,SC2329
 cleanup() {
     if [[ -n $command_pid ]]; then
         kill "$command_pid" 2>/dev/null || true
@@ -38,7 +38,7 @@ cleanup() {
     fi
     rm -f "$log"
 }
-trap cleanup EXIT
+trap 'cleanup' EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 
