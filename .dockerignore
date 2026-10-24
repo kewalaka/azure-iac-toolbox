@@ -1,0 +1,6 @@
+**
+!Dockerfile
+!.tflint.hcl
+!scripts/
+!scripts/install-tools.sh
+!scripts/toolbox-check.sh

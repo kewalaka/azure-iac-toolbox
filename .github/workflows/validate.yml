@@ -1,0 +1,31 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check shell scripts
+        run: |
+          for script in scripts/*.sh; do bash -n "$script"; done
+          shellcheck scripts/*.sh
+      - name: Check Dockerfile
+        env:
+          HADOLINT_VERSION: 2.15.1
+        run: |
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          base="https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}"
+          curl -fsSL --retry 3 "$base/hadolint-linux-x86_64" -o "$work/hadolint-linux-x86_64"
+          curl -fsSL --retry 3 "$base/checksums.sha256" -o "$work/checksums.sha256"
+          (cd "$work" && awk '$2 == "hadolint-linux-x86_64" || $2 == "*hadolint-linux-x86_64"' checksums.sha256 | sha256sum --check -)
+          chmod +x "$work/hadolint-linux-x86_64"
+          "$work/hadolint-linux-x86_64" Dockerfile
