@@ -17,7 +17,7 @@ An Ubuntu 24.04 LTS container for Azure infrastructure work. Targets **Linux amd
 | containerd | 2.4.2 |
 | Buildx / Compose | 0.38.1 / 5.6.1 |
 
-Also includes bash, git, jq, curl, wget, unzip and tar.
+Also includes bash, git, jq, curl, wget, zip, unzip, tar and `shasum` (from `libdigest-sha-perl`).
 
 PowerShell and Azure CLI use Microsoft's documented [Ubuntu package installation](https://learn.microsoft.com/powershell/scripting/install/install-ubuntu) and [Azure CLI APT installation](https://learn.microsoft.com/cli/azure/install-azure-cli-linux?pivots=apt). Docker Engine, containerd and client plugins use Docker's official Ubuntu repository. Release archives are checked against upstream SHA-256 manifests. Checkov uses its own Python 3.12 environment, separate from Azure CLI. Checkov installs from wheels only, without compilers. Environment setup and signing-key preparation stay in the build stage.
 
@@ -104,4 +104,12 @@ actionlint
 git diff --check
 ```
 
-The validation workflow runs shell/Dockerfile static checks and startup lifecycle tests with mocked Docker commands; it never starts a real daemon. Nothing publishes an image or requires registry credentials. A successful static check does not prove the image builds or runs; perform the build and smoke check above before adopting it.
+These local checks do not start a Docker daemon or build the image.
+
+## GitHub Actions validation
+
+The workflow runs static checks, builds and loads the Linux amd64 image, checks its tools, and tests Docker startup and a nested container/build on an isolated GitHub runner. Trivy scans the built image's OS and application dependencies with updated vulnerability databases. HIGH or CRITICAL findings fail validation, including findings without a fix. Lower-severity findings remain visible in the report.
+
+Each image job writes an Actions summary and retains the full JSON scan report for 14 days as the `image-scan` artifact, including when the vulnerability gate fails. Same-repository PRs receive an updated scan comment from a separate reporting job. Fork PRs and Dependabot runs still receive summaries and artifacts, but no comment because their tokens are restricted. Nothing publishes an image or requires registry credentials.
+
+A passing CI run is not a substitute for checking your sandbox's kernel, networking and certificate trust.

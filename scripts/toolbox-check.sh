@@ -28,6 +28,8 @@ jq --version
 curl --version >/dev/null
 wget --version >/dev/null
 unzip -v >/dev/null
+zip -v >/dev/null
+shasum --version
 tar --version >/dev/null
 
 if command -v gh >/dev/null || command -v ld >/dev/null; then

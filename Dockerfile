@@ -55,7 +55,7 @@ COPY --from=build /opt/keyrings/ /etc/apt/keyrings/
 RUN test "${TARGETARCH}" = amd64 \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        bash ca-certificates curl git jq python3 tar unzip wget \
+        bash ca-certificates curl git jq libdigest-sha-perl python3 tar unzip wget zip \
     && dpkg -i /etc/apt/keyrings/packages-microsoft-prod.deb \
     && rm /etc/apt/keyrings/packages-microsoft-prod.deb \
     && echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ noble main' \
