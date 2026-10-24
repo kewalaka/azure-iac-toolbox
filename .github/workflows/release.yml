@@ -1,0 +1,124 @@
+name: Release toolbox
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .tflint.hcl
+      - scripts/**
+      - tests/**
+      - .github/workflows/validate.yml
+      - .github/workflows/release.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: toolbox-release
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    uses: ./.github/workflows/validate.yml
+    with:
+      export-image: true
+    permissions:
+      contents: read
+      pull-requests: write
+
+  publish:
+    needs: validate
+    if: ${{ needs.validate.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE_SHA: ${{ github.sha }}
+      RELEASE_TAG: v0.1.${{ github.run_number }}
+      EXPECTED_IMAGE_ID: ${{ needs.validate.outputs.image-id }}
+    steps:
+      - name: Check trusted branch and existing release
+        id: release
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const sha = process.env.SOURCE_SHA;
+            const tag = process.env.RELEASE_TAG;
+            const branch = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
+            if (branch.data.commit.sha !== sha) throw new Error('main advanced; do not publish an older run');
+            const prs = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit,
+              { owner, repo, commit_sha: sha, per_page: 100 });
+            if (!prs.some(pr => pr.merged_at && pr.base.ref === 'main' && pr.merge_commit_sha === sha)) {
+              throw new Error('Only a merged main PR can release; direct pushes cannot publish');
+            }
+            try {
+              const ref = await github.rest.git.getRef({ owner, repo, ref: `tags/${tag}` });
+              if (ref.data.object.sha !== sha) throw new Error('Release tag collision');
+            } catch (error) { if (error.status !== 404) throw error; }
+            try {
+              const release = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              if (release.data.draft) throw new Error('Existing draft release must be removed before retrying');
+              core.setOutput('published', 'true');
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.setOutput('published', 'false');
+            }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.release.outputs.published != 'true'
+        with:
+          name: validated-image
+      - name: Publish the validated bytes, never rebuild
+        if: steps.release.outputs.published != 'true'
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          gzip -dc validated-image.tar.gz | docker load
+          test "$(docker image inspect azure-iac-toolbox:ci --format '{{.Id}}')" = "$EXPECTED_IMAGE_ID"
+          export DOCKER_CONFIG
+          DOCKER_CONFIG=$(mktemp -d)
+          trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          image=$(printf 'ghcr.io/%s' "$GH_REPO" | tr '[:upper:]' '[:lower:]')
+          for tag in "sha-$SOURCE_SHA" "$RELEASE_TAG"; do
+            if docker manifest inspect "$image:$tag" > existing.json 2> manifest-error.txt; then
+              test "$(jq -r '.config.digest' existing.json)" = "$EXPECTED_IMAGE_ID"
+            else
+              # Only a genuinely missing manifest permits a new immutable tag.
+              grep -Eqi 'manifest unknown|no such manifest' manifest-error.txt
+              docker tag azure-iac-toolbox:ci "$image:$tag"
+              docker push "$image:$tag"
+            fi
+          done
+      - name: Tag and publish GitHub release after registry success
+        if: steps.release.outputs.published != 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const sha = process.env.SOURCE_SHA;
+            const tag = process.env.RELEASE_TAG;
+            const branch = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
+            if (branch.data.commit.sha !== sha) throw new Error('main advanced; do not create an older release');
+            try {
+              await github.rest.git.createRef({ owner, repo, ref: `refs/tags/${tag}`, sha });
+            } catch (error) {
+              if (error.status !== 422) throw error;
+              const ref = await github.rest.git.getRef({ owner, repo, ref: `tags/${tag}` });
+              if (ref.data.object.sha !== sha) throw new Error('Release tag collision');
+            }
+            const body = `Validated Linux amd64 toolbox from ${sha}.\n\n` +
+              `Image: ghcr.io/${owner.toLowerCase()}/${repo.toLowerCase()}:${tag}\n\n` +
+              `Image config: ${process.env.EXPECTED_IMAGE_ID}\n\n` +
+              `Checks and scan: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            await github.rest.repos.createRelease({ owner, repo, tag_name: tag,
+              target_commitish: sha, name: tag, body, draft: false, prerelease: false });

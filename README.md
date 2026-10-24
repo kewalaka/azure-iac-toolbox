@@ -4,18 +4,9 @@ An Ubuntu 24.04 LTS container for Azure infrastructure work. Targets **Linux amd
 
 ## Included tools
 
-| Tool | Pinned version |
-| --- | --- |
-| PowerShell | 7.6.8 |
-| Azure CLI | 2.91.0 |
-| Terraform | 1.17.0 |
-| terraform-docs | 0.24.0 |
-| TFLint / Azure ruleset | 0.65.0 / 0.32.0 |
-| Trivy | 0.76.1 |
-| Checkov | 3.3.30 |
-| Docker Engine / CLI | 29.9.2 |
-| containerd | 2.4.2 |
-| Buildx / Compose | 0.38.1 / 5.6.1 |
+PowerShell, Azure CLI, Terraform, terraform-docs, TFLint with its Azure ruleset,
+Trivy, Checkov, Docker Engine/CLI, containerd, Buildx and Compose. See `Dockerfile`
+and `.tflint.hcl` for their exact versions.
 
 Also includes bash, git, jq, curl, wget, zip, unzip, tar and `shasum` (from `libdigest-sha-perl`).
 
@@ -110,7 +101,8 @@ for script in scripts/*.sh; do bash -n "$script"; done
 shellcheck scripts/*.sh
 python3 -B -m unittest discover -s tests -v
 hadolint Dockerfile
-actionlint
+actionlint .github/workflows/validate.yml .github/workflows/release.yml
+gh aw compile --strict
 git diff --check
 ```
 
@@ -120,6 +112,75 @@ These local checks do not start a Docker daemon or build the image.
 
 The workflow runs static checks, builds and loads the Linux amd64 image, checks its tools, and tests Docker startup and a nested container/build on an isolated GitHub runner. Trivy scans the built image's OS and application dependencies with updated vulnerability databases. HIGH or CRITICAL findings fail validation, including findings without a fix. Lower-severity findings remain visible in the report.
 
-Each image job writes an Actions summary and retains the full JSON scan report for 14 days as the `image-scan` artifact, including when the vulnerability gate fails. Same-repository PRs receive an updated scan comment from a separate reporting job. Fork PRs and Dependabot runs still receive summaries and artifacts, but no comment because their tokens are restricted. Nothing publishes an image or requires registry credentials.
+Each image job writes an Actions summary and retains the full JSON scan report for 14 days as the `image-scan` artifact, including when the vulnerability gate fails. Same-repository PRs receive an updated scan comment from a separate reporting job. Fork PRs and Dependabot runs still receive summaries and artifacts, but no comment because their tokens are restricted.
 
 A passing CI run is not a substitute for checking your sandbox's kernel, networking and certificate trust.
+
+## Scheduled package updates
+
+`package-updates.md` is a [GitHub Agentic Workflow](https://github.github.com/gh-aw/).
+It runs Mondays and Thursdays at 05:17 UTC, or manually on `main`. Deterministic
+Python discovery covers all twelve image tool pins; Dependabot does not cover
+these Docker ARG/APT/plugin versions. It permits only stable, strictly newer
+minor/patch versions in the current major, published at least four days ago.
+CI Actions, the AW compiler and validation tools remain separately reviewed;
+the agent cannot edit executable policy or workflows.
+
+Evidence comes from upstream GitHub releases/issues, PyPI and GitHub's reviewed
+Checkov advisories. APT versions/digests come from authenticated Microsoft/Docker
+indexes. Their age uses the later of the upstream release date and the package
+origin's HTTP `Last-Modified`; that timestamp is origin-provided, **not signed**.
+Missing timestamps or source failures block discovery. Known reviewed Checkov
+advisories cannot be approved. Binary/transitive vulnerabilities are also checked
+by the full image scan; empty upstream issue searches are not proof of safety.
+
+The network-restricted, read-only agent can defer candidates, not invent versions
+or bypass age checks. A separate trusted job checks advice, provenance, the exact
+pin-only Git tree, both Git bundle/patch transports and the PR request before AW's
+safe-output writer can create **one** `chore(deps):` PR. No automatic merge occurs.
+Only `Dockerfile` and `.tflint.hcl` can change. An outstanding update PR pauses new
+proposals; enable automatic head-branch deletion and delete abandoned closed
+`automation/package-updates` branches before retrying.
+
+### Repository setup
+
+- Enable Actions and creation of pull requests. Protect `main`: require PR review
+  and the `static` and `image` validation checks; do not allow bypassing the scan.
+- Add repository secret `COPILOT_GITHUB_TOKEN`: a fine-grained token with
+  account-level **Copilot Requests** permission and no repository write access;
+  follow the [Copilot authentication guidance](https://github.github.com/gh-aw/reference/engines/).
+- Create environment **`package-updates`**, restricted to `main`. Add
+  **only there** secret `PACKAGE_UPDATES_PR_TOKEN`: a fine-grained token limited
+  to this repository, with Contents and Pull requests write. This separate token
+  lets update PRs trigger normal CI. Never put it in repository/organization
+  secrets: compiler references also exist in the agent job, which must resolve
+  empty. Discovery explicitly rejects mis-scoping. Do not configure generic
+  `GH_AW_GITHUB_TOKEN` or `GH_AW_GITHUB_MCP_SERVER_TOKEN` overrides.
+- Create environment **`release`**, restricted to `main`; add required reviewers
+  if publication needs approval. GitHub's job token handles GHCR and releases;
+  no Docker Hub credential is needed. Set the GHCR package's visibility to public
+  after its first publication if anonymous pulls are required.
+
+Install the pinned compiler with `gh extension install github/gh-aw --pin v0.93.2`.
+Edit the Markdown source, run `gh aw compile --strict`, and commit the generated
+lock, `.github/aw/actions-lock.json` and `.gitattributes` with it. CI repeats strict
+compilation and checks for lock drift. The generated lock uses platform features
+not understood by actionlint 1.7.12, which also flags undeclared compiler-generated
+admission outputs. Strict compilation succeeds; hosted AW execution still needs
+verification after setup. Lint handwritten workflows separately; do not hand-edit
+the generated lock.
+
+## Releases
+
+A merged PR changing image inputs triggers reusable validation on `main`. Only
+its successfully tested and scanned image is exported to a same-run artifact.
+A separate `release` job never checks out PR code or rebuilds: it loads those
+bytes, verifies the image config digest, and publishes
+`ghcr.io/kewalaka/azure-iac-toolbox:sha-<commit>` and `:v0.1.<run-number>` before
+creating the matching GitHub tag/release. There is no mutable `latest` tag.
+Direct pushes, failed checks, advanced `main`, tag collisions, registry errors
+or different existing image bytes block publication. Reruns reuse immutable
+names; remove a conflicting draft release before retrying.
+
+Existing HIGH/CRITICAL image findings, including unfixed vendor dependencies,
+currently block publication. Do not suppress them to enable a release.

@@ -4,6 +4,14 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      export-image:
+        type: boolean
+        default: false
+    outputs:
+      image-id:
+        value: ${{ jobs.image.outputs.image-id }}
 
 permissions:
   contents: read
@@ -17,8 +25,19 @@ jobs:
         run: |
           for script in scripts/*.sh; do bash -n "$script"; done
           shellcheck scripts/*.sh
-      - name: Test Docker lifecycle and scan reporting
+      - name: Test toolbox and update/release gates
         run: python3 -B -m unittest discover -s tests -v
+      - name: Validate the locked agentic workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          work=$(mktemp -d)
+          trap 'rm -rf "$work"' EXIT
+          curl -fsSL --retry 3 https://github.com/github/gh-aw/releases/download/v0.93.2/linux-amd64 -o "$work/gh-aw"
+          echo "364b98de9a8b8948792289128bbf3907d152284804e02b70804fc123e09ca6fd  $work/gh-aw" | sha256sum --check
+          chmod +x "$work/gh-aw"
+          "$work/gh-aw" compile --strict
+          git diff --exit-code -- .github/workflows/package-updates.lock.yml .github/aw/actions-lock.json
       - name: Check Dockerfile
         env:
           HADOLINT_VERSION: 2.15.1
@@ -38,6 +57,7 @@ jobs:
     timeout-minutes: 45
     outputs:
       report-ready: ${{ steps.artifact.outcome == 'success' }}
+      image-id: ${{ steps.export.outputs.image-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -92,6 +112,20 @@ jobs:
             trivy-results.json
             image-summary.md
           retention-days: 14
+          if-no-files-found: error
+      - name: Export the exact tested and scanned image
+        id: export
+        if: ${{ success() && inputs.export-image && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: |
+          docker image inspect azure-iac-toolbox:ci --format '{{.Id}}' | sed 's/^/image-id=/' >> "$GITHUB_OUTPUT"
+          docker save azure-iac-toolbox:ci | gzip > validated-image.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ success() && steps.export.outcome == 'success' }}
+        with:
+          name: validated-image
+          path: validated-image.tar.gz
+          compression-level: 0
+          retention-days: 2
           if-no-files-found: error
 
   pr-report:
