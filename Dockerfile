@@ -38,7 +38,9 @@ FROM ubuntu:24.04 AS toolbox
 ARG TARGETARCH
 ARG POWERSHELL_VERSION=7.6.8-1.deb
 ARG AZURE_CLI_VERSION=2.91.0-1~noble
-ARG DOCKER_CLI_VERSION=5:29.9.2-1~ubuntu.24.04~noble
+ARG DOCKER_VERSION=5:29.9.2-1~ubuntu.24.04~noble
+ARG CONTAINERD_VERSION=2.4.2-3~ubuntu.24.04~noble
+ARG DOCKER_BUILDX_VERSION=0.38.1-1~ubuntu.24.04~noble
 ARG DOCKER_COMPOSE_VERSION=5.6.1-1~ubuntu.24.04~noble
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -64,7 +66,10 @@ RUN test "${TARGETARCH}" = amd64 \
     && apt-get install -y --no-install-recommends \
         "powershell=${POWERSHELL_VERSION}" \
         "azure-cli=${AZURE_CLI_VERSION}" \
-        "docker-ce-cli=${DOCKER_CLI_VERSION}" \
+        "docker-ce=${DOCKER_VERSION}" \
+        "docker-ce-cli=${DOCKER_VERSION}" \
+        "containerd.io=${CONTAINERD_VERSION}" \
+        "docker-buildx-plugin=${DOCKER_BUILDX_VERSION}" \
         "docker-compose-plugin=${DOCKER_COMPOSE_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 
@@ -74,7 +79,9 @@ COPY --from=build /opt/checkov/ /opt/checkov/
 COPY --from=build /opt/tflint/plugins/ /opt/tflint/plugins/
 COPY .tflint.hcl /root/.tflint.hcl
 COPY scripts/toolbox-check.sh /usr/local/bin/toolbox-check
-RUN chmod +x /usr/local/bin/toolbox-check && toolbox-check
+COPY scripts/toolbox-entrypoint.sh /usr/local/bin/toolbox-entrypoint
+RUN chmod +x /usr/local/bin/toolbox-check /usr/local/bin/toolbox-entrypoint && toolbox-check
 
 WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/toolbox-entrypoint"]
 CMD ["/bin/bash"]

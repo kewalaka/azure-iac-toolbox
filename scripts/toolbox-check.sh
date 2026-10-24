@@ -18,6 +18,9 @@ pwsh -NoLogo -NoProfile -Command '
     }
 '
 docker --version
+dockerd --version
+containerd --version
+docker buildx version
 docker compose version
 bash --version >/dev/null
 git --version
@@ -27,7 +30,7 @@ wget --version >/dev/null
 unzip -v >/dev/null
 tar --version >/dev/null
 
-if command -v dockerd >/dev/null || command -v gh >/dev/null || command -v ld >/dev/null; then
-    echo 'Unexpected daemon, GitHub CLI, or build tools in runtime' >&2
+if command -v gh >/dev/null || command -v ld >/dev/null; then
+    echo 'Unexpected GitHub CLI or build tools in runtime' >&2
     exit 1
 fi

@@ -17,6 +17,8 @@ jobs:
         run: |
           for script in scripts/*.sh; do bash -n "$script"; done
           shellcheck scripts/*.sh
+      - name: Test Docker startup lifecycle without a daemon
+        run: python3 -B -m unittest discover -s tests -v
       - name: Check Dockerfile
         env:
           HADOLINT_VERSION: 2.15.1

@@ -4,3 +4,4 @@
 !scripts/
 !scripts/install-tools.sh
 !scripts/toolbox-check.sh
+!scripts/toolbox-entrypoint.sh
