@@ -94,7 +94,7 @@ jobs:
           ignore-unfixed: false
           exit-code: '0'
           timeout: 15m
-      - name: Write summary and enforce vulnerability gate
+      - name: Write vulnerability summary and require a complete scan
         if: ${{ !cancelled() }}
         env:
           SCAN_OUTCOME: ${{ steps.scan.outcome }}

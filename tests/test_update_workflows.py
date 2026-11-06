@@ -125,7 +125,7 @@ print(json.load(open(sys.argv[-1]))['config']['digest'])
 
 
 class ConfigurationTests(unittest.TestCase):
-    def test_release_reuses_gated_main_image_without_checkout(self):
+    def test_release_reuses_scanned_main_image_without_checkout(self):
         self.assertIn("needs.validate.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'", RELEASE)
         self.assertIn('uses: ./.github/workflows/validate.yml', RELEASE)
         self.assertIn('environment: release', RELEASE)
@@ -133,6 +133,7 @@ class ConfigurationTests(unittest.TestCase):
         validation = (ROOT / '.github/workflows/validate.yml').read_text()
         self.assertIn("success() && inputs.export-image && github.event_name == 'push' && github.ref == 'refs/heads/main'", validation)
         self.assertIn('HIGH,CRITICAL', validation)
+        self.assertIn('Vulnerability findings are informational', RELEASE)
         self.assertNotIn('--ignore-unfixed', validation)
         self.assertIn('name: validated-image', validation)
         self.assertIn('permissions:\n  contents: read', validation)

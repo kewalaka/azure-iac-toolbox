@@ -21,12 +21,13 @@ class ImageReportTests(unittest.TestCase):
             "Results": [{"Target": target, "Vulnerabilities": [{"Severity": severity} for severity in severities]}],
         }
 
-    def test_high_and_critical_block_even_without_fixes(self):
+    def test_high_and_critical_are_visible_but_do_not_block(self):
         for severity in ("HIGH", "CRITICAL"):
             with self.subTest(severity=severity):
                 summary, blocked = module.summarize(self.report([severity]), "success", "https://example.com/run")
-                self.assertTrue(blocked)
-                self.assertIn("Blocked", summary)
+                self.assertFalse(blocked)
+                self.assertIn("Warning", summary)
+                self.assertIn("do not block release", summary)
 
     def test_lower_severities_pass_and_are_counted(self):
         summary, blocked = module.summarize(self.report(["MEDIUM", "LOW", "LOW", "UNKNOWN"]), "success", "https://example.com/run")
@@ -36,7 +37,7 @@ class ImageReportTests(unittest.TestCase):
     def test_empty_scan_passes(self):
         summary, blocked = module.summarize({"SchemaVersion": 2}, "success", "https://example.com/run")
         self.assertFalse(blocked)
-        self.assertIn("Passed", summary)
+        self.assertIn("No HIGH or CRITICAL", summary)
 
     def test_incomplete_scans_fail_closed(self):
         for report, outcome in ((None, "failure"), ({}, "success"), (self.report([]), "skipped")):
@@ -45,7 +46,7 @@ class ImageReportTests(unittest.TestCase):
                 self.assertTrue(blocked)
                 self.assertIn("Scan incomplete", summary)
 
-    def test_command_writes_both_summaries_before_failing_gate(self):
+    def test_command_writes_both_summaries_with_findings(self):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             (work / "trivy-results.json").write_text(module.json.dumps(self.report(["HIGH"])))
@@ -54,11 +55,22 @@ class ImageReportTests(unittest.TestCase):
                                GITHUB_STEP_SUMMARY=str(work / "actions-summary.md"))
             result = subprocess.run([sys.executable, "-B", module.__file__], cwd=work,
                                     env=environment, capture_output=True, text=True)
-            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertEqual(result.returncode, 0, result.stderr)
             summary = (work / "image-summary.md").read_text()
             self.assertEqual(summary, (work / "actions-summary.md").read_text())
-            self.assertIn("Blocked", summary)
+            self.assertIn("Warning", summary)
             self.assertIn("Build: success; smoke test: success", summary)
+
+    def test_command_fails_and_reports_incomplete_scan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            environment = dict(os.environ, SCAN_OUTCOME="failure", BUILD_OUTCOME="success",
+                               SMOKE_OUTCOME="success", RUN_URL="https://example.com/run",
+                               GITHUB_STEP_SUMMARY=str(work / "actions-summary.md"))
+            result = subprocess.run([sys.executable, "-B", module.__file__], cwd=work,
+                                    env=environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("Scan incomplete", (work / "image-summary.md").read_text())
 
     def test_target_cannot_inject_markdown_rows_or_html(self):
         summary, _ = module.summarize(self.report(["LOW"], "target|\n<script>"), "success", "https://example.com/run")

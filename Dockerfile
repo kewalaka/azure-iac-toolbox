@@ -1,7 +1,7 @@
 FROM ubuntu:24.04 AS build
 
 ARG TARGETARCH
-ARG TERRAFORM_VERSION=1.17.0
+ARG TERRAFORM_VERSION=1.17.1
 ARG TERRAFORM_DOCS_VERSION=0.24.0
 ARG TFLINT_VERSION=0.65.0
 ARG TRIVY_VERSION=0.76.1
@@ -55,7 +55,7 @@ COPY --from=build /opt/keyrings/ /etc/apt/keyrings/
 RUN test "${TARGETARCH}" = amd64 \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        bash ca-certificates curl git jq libdigest-sha-perl python3 tar unzip util-linux wget zip \
+        apt bash ca-certificates curl git jq libdigest-sha-perl python3 tar unzip util-linux wget zip \
     && dpkg -i /etc/apt/keyrings/packages-microsoft-prod.deb \
     && rm /etc/apt/keyrings/packages-microsoft-prod.deb \
     && echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ noble main' \

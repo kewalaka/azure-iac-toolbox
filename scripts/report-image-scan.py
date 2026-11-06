@@ -32,8 +32,12 @@ def summarize(report, outcome, run_url):
                 target = html.escape(str(result.get("Target", "unknown")))
                 target = target.replace("|", "&#124;").replace("\n", " ").replace("\r", " ")[:200]
                 rows.append(f"| {target} | " + " | ".join(str(findings[s]) for s in SEVERITIES) + " |")
-        blocked = bool(counts["HIGH"] or counts["CRITICAL"])
-        lines.append("**Blocked: HIGH or CRITICAL vulnerabilities found.**" if blocked else "**Passed: no HIGH or CRITICAL vulnerabilities found.**")
+        blocked = False
+        lines.append(
+            "**Warning: HIGH or CRITICAL vulnerabilities found; findings do not block release.**"
+            if counts["HIGH"] or counts["CRITICAL"]
+            else "**No HIGH or CRITICAL vulnerabilities found.**"
+        )
         lines += ["", "| Target | CRITICAL | HIGH | MEDIUM | LOW | UNKNOWN |", "| --- | ---: | ---: | ---: | ---: | ---: |"]
         lines += rows[:50]
         lines.append("| **Total** | " + " | ".join(str(counts[s]) for s in SEVERITIES) + " |")

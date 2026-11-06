@@ -119,6 +119,7 @@ jobs:
             const body = `Validated Linux amd64 toolbox from ${sha}.\n\n` +
               `Image: ghcr.io/${owner.toLowerCase()}/${repo.toLowerCase()}:${tag}\n\n` +
               `Image config: ${process.env.EXPECTED_IMAGE_ID}\n\n` +
-              `Checks and scan: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+              `Checks and scan: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}\n\n` +
+              `Vulnerability findings are informational and do not block this release; review the scan report.`;
             await github.rest.repos.createRelease({ owner, repo, tag_name: tag,
               target_commitish: sha, name: tag, body, draft: false, prerelease: false });

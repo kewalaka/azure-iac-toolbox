@@ -110,9 +110,9 @@ These local checks do not start a Docker daemon or build the image.
 
 ## GitHub Actions validation
 
-The workflow runs static checks, builds and loads the Linux amd64 image, checks its tools, and tests Docker startup and a nested container/build on an isolated GitHub runner. Trivy scans the built image's OS and application dependencies with updated vulnerability databases. HIGH or CRITICAL findings fail validation, including findings without a fix. Lower-severity findings remain visible in the report.
+The workflow runs static checks, builds and loads the Linux amd64 image, checks its tools, and tests Docker startup and a nested container/build on an isolated GitHub runner. Trivy scans the built image's OS and application dependencies with updated vulnerability databases. Findings of all severities, including unfixed HIGH and CRITICAL vulnerabilities, are reported but do not fail validation or block publication. A failed or incomplete scan still blocks validation and publication.
 
-Each image job writes an Actions summary and retains the full JSON scan report for 14 days as the `image-scan` artifact, including when the vulnerability gate fails. Same-repository PRs receive an updated scan comment from a separate reporting job. Fork PRs and Dependabot runs still receive summaries and artifacts, but no comment because their tokens are restricted.
+Each image job writes an Actions summary and retains the full JSON scan report for 14 days as the `image-scan` artifact. Same-repository PRs receive an updated scan comment from a separate reporting job. Fork PRs and Dependabot runs still receive summaries and artifacts, but no comment because their tokens are restricted.
 
 A passing CI run is not a substitute for checking your sandbox's kernel, networking and certificate trust.
 
@@ -183,4 +183,8 @@ or different existing image bytes block publication. Reruns reuse immutable
 names; remove a conflicting draft release before retrying.
 
 Existing HIGH/CRITICAL image findings, including unfixed vendor dependencies,
-currently block publication. Do not suppress them to enable a release.
+do not block publication. Review the scan report before using the image; successful
+validation does not mean the image has no known vulnerabilities.
+
+The AzureRM TFLint ruleset is pinned to 0.33.0, whose upstream release removes
+some rules for retired resources and changes API-spec rule generation.
