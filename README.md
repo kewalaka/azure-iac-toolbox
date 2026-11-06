@@ -114,6 +114,13 @@ The workflow runs static checks, builds and loads the Linux amd64 image, checks 
 
 PRs, non-main branch pushes and manual dispatches run `Validate` directly.
 Pushes to `main` run it only through `Release toolbox`, avoiding duplicate builds.
+Every PR runs static validation. PR image builds, smoke tests and scans run only
+when `Dockerfile`, `.dockerignore`, `.tflint.hcl`, `scripts/install-tools.sh`,
+`scripts/toolbox-check.sh` or `scripts/toolbox-entrypoint.sh` changes (including
+renames away from those paths). Other PRs retain a successful `image` check with
+an explicit skip summary; no workflow-wide path filter strands required checks.
+Incomplete PR file discovery fails closed. Main pushes, non-main pushes and
+manual runs always build/test/scan, regardless of changed paths.
 
 Each image job writes an Actions summary and retains the full JSON scan report for 14 days as the `image-scan` artifact. Same-repository PRs receive an updated scan comment from a separate reporting job. Fork PRs and Dependabot runs still receive summaries and artifacts, but no comment because their tokens are restricted.
 

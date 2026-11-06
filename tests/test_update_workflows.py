@@ -136,6 +136,64 @@ print(json.load(open(sys.argv[-1]))['config']['digest'])
         self.assertNotIn('push ', commands)
 
 
+class PathDecisionTests(unittest.TestCase):
+    def decision(self, files, event='pull_request', total=None):
+        validation = (ROOT / '.github/workflows/validate.yml').read_text()
+        script = dedent(blocks(validation, '          script: |')[0], 12)
+        harness = '''
+const scenario = JSON.parse(process.env.SCENARIO);
+const github = {paginate: async () => scenario.files, rest:{pulls:{listFiles:()=>{}}}};
+const core = {setOutput:(name,value)=>console.log(value)};
+const context = {eventName:scenario.event, repo:{owner:'test',repo:'test'},
+  issue:{number:3}, payload:{pull_request:{changed_files:scenario.total}}};
+const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+new AsyncFunction('github','core','context',process.env.SCRIPT)(github,core,context)
+  .catch(error=>{console.error(error.message);process.exitCode=1;});
+'''
+        return subprocess.run(['node', '-e', harness], capture_output=True, text=True,
+                              env=dict(os.environ, SCRIPT=script, SCENARIO=json.dumps({
+                                  'files': files, 'event': event,
+                                  'total': len(files) if total is None else total})))
+
+    def test_only_prs_without_image_inputs_skip(self):
+        for path in ['Dockerfile', '.dockerignore', '.tflint.hcl', 'scripts/install-tools.sh',
+                     'scripts/toolbox-check.sh', 'scripts/toolbox-entrypoint.sh']:
+            for file in [{'filename': path}, {'filename': 'archived', 'previous_filename': path}]:
+                with self.subTest(file=file):
+                    result = self.decision([file])
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.strip(), 'true')
+        files = [{'filename': path} for path in [
+            'README.md', 'CHANGELOG.md', 'version.txt', 'tests/test_update_workflows.py',
+            '.github/workflows/release.yml', '.release-please-manifest.json']]
+        result = self.decision(files)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), 'false')
+        for event in ['push', 'workflow_dispatch', 'workflow_call']:
+            result = self.decision(files, event)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), 'true')
+
+    def test_incomplete_file_discovery_cannot_skip(self):
+        for files, total in [([], 1), ([{'filename': 'README.md'}] * 3000, 3000)]:
+            result = self.decision(files, total=total)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Incomplete PR file list', result.stderr)
+
+    def test_image_check_remains_stable_and_static_always_runs(self):
+        validation = (ROOT / '.github/workflows/validate.yml').read_text()
+        static = validation.split('\n  static:\n')[1].split('\n  image:\n')[0]
+        image = validation.split('\n  image:\n')[1].split('\n  pr-report:\n')[0]
+        self.assertNotIn('\n    if:', static)
+        self.assertNotIn('\n    if:', image)
+        self.assertIn('needs: static', image)
+        self.assertIn('Image validation skipped', image)
+        self.assertEqual(image.count("if: ${{ needs.static.outputs.image-required != 'false' }}"), 4)
+        self.assertIn("!cancelled() && needs.static.outputs.image-required != 'false'", image)
+        self.assertIn("steps.build.outcome == 'success'", image)
+        self.assertIn("success() && inputs.export-image && github.event_name == 'push' && github.ref == 'refs/heads/main'", image)
+
+
 class ConfigurationTests(unittest.TestCase):
     def test_main_push_has_only_reusable_validation(self):
         validation = (ROOT / '.github/workflows/validate.yml').read_text()
