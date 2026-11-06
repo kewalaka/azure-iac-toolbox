@@ -3,13 +3,6 @@ name: Release toolbox
 on:
   push:
     branches: [main]
-    paths:
-      - Dockerfile
-      - .tflint.hcl
-      - scripts/**
-      - tests/**
-      - .github/workflows/validate.yml
-      - .github/workflows/release.yml
 
 permissions:
   contents: read
@@ -27,57 +20,87 @@ jobs:
       contents: read
       pull-requests: write
 
-  publish:
+  release-please:
     needs: validate
     if: ${{ needs.validate.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      release-created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+      sha: ${{ steps.release.outputs.sha }}
+    env:
+      SOURCE_SHA: ${{ github.sha }}
+    steps:
+      - name: Check trusted branch before creating a release
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const sha = process.env.SOURCE_SHA;
+            const branch = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
+            if (branch.data.commit.sha !== sha) throw new Error('main advanced; do not release an older run');
+            const prs = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit,
+              { owner, repo, commit_sha: sha, per_page: 100 });
+            if (!prs.some(pr => pr.merged_at && pr.base.ref === 'main' && pr.merge_commit_sha === sha)) {
+              throw new Error('Only a merged main PR can release; direct pushes cannot publish');
+            }
+      - name: Require CI-capable release PR credentials
+        env:
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_PLEASE_TOKEN" ]; then
+            echo "::error::Configure RELEASE_PLEASE_TOKEN in the release environment so release PRs trigger validation"
+            exit 1
+          fi
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: [validate, release-please]
+    if: ${{ needs.validate.result == 'success' && needs.release-please.outputs.release-created == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: release
     permissions:
-      contents: write
+      contents: read
       packages: write
-      actions: read
-      pull-requests: read
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_SHA: ${{ github.sha }}
-      RELEASE_TAG: v0.1.${{ github.run_number }}
+      RELEASE_SHA: ${{ needs.release-please.outputs.sha }}
+      RELEASE_TAG: ${{ needs.release-please.outputs.tag }}
       EXPECTED_IMAGE_ID: ${{ needs.validate.outputs.image-id }}
     steps:
-      - name: Check trusted branch and existing release
-        id: release
+      - name: Verify the release identifies the validated commit
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const { owner, repo } = context.repo;
             const sha = process.env.SOURCE_SHA;
             const tag = process.env.RELEASE_TAG;
+            if (process.env.RELEASE_SHA !== sha) throw new Error('Release does not match the validated commit');
+            if (!/^v\d+\.\d+\.\d+$/.test(tag)) throw new Error('Expected a stable semantic version tag');
             const branch = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
             if (branch.data.commit.sha !== sha) throw new Error('main advanced; do not publish an older run');
-            const prs = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit,
-              { owner, repo, commit_sha: sha, per_page: 100 });
-            if (!prs.some(pr => pr.merged_at && pr.base.ref === 'main' && pr.merge_commit_sha === sha)) {
-              throw new Error('Only a merged main PR can release; direct pushes cannot publish');
-            }
-            try {
-              const ref = await github.rest.git.getRef({ owner, repo, ref: `tags/${tag}` });
-              if (ref.data.object.sha !== sha) throw new Error('Release tag collision');
-            } catch (error) { if (error.status !== 404) throw error; }
-            try {
-              const release = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
-              if (release.data.draft) throw new Error('Existing draft release must be removed before retrying');
-              core.setOutput('published', 'true');
-            } catch (error) {
-              if (error.status !== 404) throw error;
-              core.setOutput('published', 'false');
-            }
+            const ref = await github.rest.git.getRef({ owner, repo, ref: `tags/${tag}` });
+            if (ref.data.object.sha !== sha) throw new Error('Release tag does not match the validated commit');
+            const release = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+            if (release.data.draft || release.data.prerelease) throw new Error('Expected a published stable release');
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: steps.release.outputs.published != 'true'
         with:
           name: validated-image
       - name: Publish the validated bytes, never rebuild
-        if: steps.release.outputs.published != 'true'
         run: |
           set -euo pipefail
           [[ "$EXPECTED_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -99,27 +122,10 @@ jobs:
               docker push "$image:$tag"
             fi
           done
-      - name: Tag and publish GitHub release after registry success
-        if: steps.release.outputs.published != 'true'
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const { owner, repo } = context.repo;
-            const sha = process.env.SOURCE_SHA;
-            const tag = process.env.RELEASE_TAG;
-            const branch = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
-            if (branch.data.commit.sha !== sha) throw new Error('main advanced; do not create an older release');
-            try {
-              await github.rest.git.createRef({ owner, repo, ref: `refs/tags/${tag}`, sha });
-            } catch (error) {
-              if (error.status !== 422) throw error;
-              const ref = await github.rest.git.getRef({ owner, repo, ref: `tags/${tag}` });
-              if (ref.data.object.sha !== sha) throw new Error('Release tag collision');
-            }
-            const body = `Validated Linux amd64 toolbox from ${sha}.\n\n` +
-              `Image: ghcr.io/${owner.toLowerCase()}/${repo.toLowerCase()}:${tag}\n\n` +
-              `Image config: ${process.env.EXPECTED_IMAGE_ID}\n\n` +
-              `Checks and scan: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}\n\n` +
-              `Vulnerability findings are informational and do not block this release; review the scan report.`;
-            await github.rest.repos.createRelease({ owner, repo, tag_name: tag,
-              target_commitish: sha, name: tag, body, draft: false, prerelease: false });
+      - name: Report published image and scan policy
+        run: |
+          {
+            echo "Published ghcr.io/${GH_REPO,,}:$RELEASE_TAG from $SOURCE_SHA"
+            echo "Image config: $EXPECTED_IMAGE_ID"
+            echo "Vulnerability findings are informational and do not block this release; review the image-scan artifact."
+          } >> "$GITHUB_STEP_SUMMARY"

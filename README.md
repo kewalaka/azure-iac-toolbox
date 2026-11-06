@@ -112,6 +112,9 @@ These local checks do not start a Docker daemon or build the image.
 
 The workflow runs static checks, builds and loads the Linux amd64 image, checks its tools, and tests Docker startup and a nested container/build on an isolated GitHub runner. Trivy scans the built image's OS and application dependencies with updated vulnerability databases. Findings of all severities, including unfixed HIGH and CRITICAL vulnerabilities, are reported but do not fail validation or block publication. A failed or incomplete scan still blocks validation and publication.
 
+PRs, non-main branch pushes and manual dispatches run `Validate` directly.
+Pushes to `main` run it only through `Release toolbox`, avoiding duplicate builds.
+
 Each image job writes an Actions summary and retains the full JSON scan report for 14 days as the `image-scan` artifact. Same-repository PRs receive an updated scan comment from a separate reporting job. Fork PRs and Dependabot runs still receive summaries and artifacts, but no comment because their tokens are restricted.
 
 A passing CI run is not a substitute for checking your sandbox's kernel, networking and certificate trust.
@@ -157,7 +160,12 @@ proposals; enable automatic head-branch deletion and delete abandoned closed
   empty. Discovery explicitly rejects mis-scoping. Do not configure generic
   `GH_AW_GITHUB_TOKEN` or `GH_AW_GITHUB_MCP_SERVER_TOKEN` overrides.
 - Create environment **`release`**, restricted to `main`; add required reviewers
-  if publication needs approval. GitHub's job token handles GHCR and releases;
+  if release creation/publication needs approval. Add **only there** secret
+  `RELEASE_PLEASE_TOKEN`: a fine-grained token limited to this repository with
+  Contents, Issues and Pull requests write. It creates release PRs, labels,
+  tags and GitHub Releases. Unlike the default `GITHUB_TOKEN`, it lets release
+  PRs trigger required validation. Do not grant branch-protection bypass.
+  GitHub's job token handles GHCR with Packages write only in the publishing job;
   no Docker Hub credential is needed. Set the GHCR package's visibility to public
   after its first publication if anonymous pulls are required.
 
@@ -172,15 +180,43 @@ the generated lock.
 
 ## Releases
 
-A merged PR changing image inputs triggers reusable validation on `main`. Only
-its successfully tested and scanned image is exported to a same-run artifact.
-A separate `release` job never checks out PR code or rebuilds: it loads those
-bytes, verifies the image config digest, and publishes
-`ghcr.io/kewalaka/azure-iac-toolbox:sha-<commit>` and `:v0.1.<run-number>` before
-creating the matching GitHub tag/release. There is no mutable `latest` tag.
-Direct pushes, failed checks, advanced `main`, tag collisions, registry errors
-or different existing image bytes block publication. Reruns reuse immutable
-names; remove a conflicting draft release before retrying.
+Every push to `main` triggers reusable validation once, including version-only
+release PR merges. Only its successfully tested and scanned image is exported
+to a same-run artifact. After validation, Release Please opens/updates a release
+PR using `release-please-config.json` and `.release-please-manifest.json`.
+This container has no language package manifest: the `simple` strategy maintains
+`version.txt`, the release manifest and `CHANGELOG.md` together.
+
+Use Conventional Commits in **the commit messages that land on main**: prefer
+squash merges with PR titles such as `feat: add a tool` (minor),
+`fix: correct startup` (patch), or `feat!: change the interface` /
+`BREAKING CHANGE:` (major). With merge commits, keep the individual commit
+messages conventional too. Release Please, not an Actions run number, chooses
+the next semantic version. Bootstrap starts at `0.0.0` and considers commits
+after `90b1544`; this is not an existing published release.
+
+Merging the release PR triggers validation again, then Release Please creates
+the semantic `vX.Y.Z` tag and GitHub Release. Only a newly created release enables
+the publishing job in that same workflow run; there is no second release/tag
+event publisher. Ordinary merges only maintain the release PR and never publish
+GHCR tags. Same-run outputs avoid relying on token-generated events starting
+another workflow.
+
+The publishing job never checks out code or rebuilds. It checks that the release
+SHA and tag identify the exact validated commit, loads the artifact, verifies
+the image config digest, and publishes
+`ghcr.io/kewalaka/azure-iac-toolbox:sha-<commit>` and `:vX.Y.Z`.
+There is no mutable `latest` tag. Direct pushes, failed checks, advanced `main`,
+mismatched release commits/tags, registry errors or different existing image bytes
+block publication. Vulnerability summaries and the full `image-scan` artifact
+remain attached to the workflow run.
+
+Release Please creates the GitHub Release before GHCR publication; a release
+alone is not proof the image was pushed. If publication fails, use **Re-run failed
+jobs** on that run while its two-day `validated-image` artifact is available.
+This retains the release outputs and retries immutable tags without rebuilding
+or overwriting different bytes. Do not rerun the entire workflow: an already
+created release does not emit `release_created` again.
 
 Existing HIGH/CRITICAL image findings, including unfixed vendor dependencies,
 do not block publication. Review the scan report before using the image; successful

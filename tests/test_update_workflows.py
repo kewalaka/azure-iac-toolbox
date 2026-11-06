@@ -23,8 +23,8 @@ def dedent(text, width):
 
 
 class ReleaseTests(unittest.TestCase):
-    def preflight(self, case):
-        script = dedent(blocks(RELEASE, '          script: |')[0], 12)
+    def preflight(self, case, publishing=False):
+        script = dedent(blocks(RELEASE, '          script: |')[int(publishing)], 12)
         harness = '''
 const scenario = JSON.parse(process.env.SCENARIO);
 const missing = () => { throw Object.assign(new Error('missing'), {status:404}); };
@@ -42,7 +42,8 @@ new AsyncFunction('github','core','context',process.env.SCRIPT)(github,core,cont
   .catch(error => { console.error(error.message); process.exitCode=1; });
 '''
         return subprocess.run(['node', '-e', harness], text=True, capture_output=True,
-                              env=dict(os.environ, SOURCE_SHA=SHA, RELEASE_TAG='v0.1.1',
+                              env=dict(os.environ, SOURCE_SHA=SHA, RELEASE_TAG=case.get('version', 'v0.1.1'),
+                                       RELEASE_SHA=case.get('release_sha', SHA),
                                        SCRIPT=script, SCENARIO=json.dumps(case)))
 
     def case(self):
@@ -50,25 +51,36 @@ new AsyncFunction('github','core','context',process.env.SCRIPT)(github,core,cont
 
     def test_only_current_merged_main_can_release(self):
         self.assertEqual(self.preflight(self.case()).returncode, 0)
-        for mutation in ['advanced', 'direct-push', 'other-base', 'different-merge', 'collision', 'draft']:
+        for mutation in ['advanced', 'direct-push', 'other-base', 'different-merge']:
             case = self.case()
             if mutation == 'advanced': case['main'] = 'c' * 40
             if mutation == 'direct-push': case['prs'] = []
             if mutation == 'other-base': case['prs'][0]['base']['ref'] = 'other'
             if mutation == 'different-merge': case['prs'][0]['merge_commit_sha'] = 'c' * 40
-            if mutation == 'collision': case['tag'] = 'c' * 40
-            if mutation == 'draft': case['release'] = {'draft': True}
             with self.subTest(mutation=mutation):
                 self.assertNotEqual(self.preflight(case).returncode, 0)
 
-    def test_published_release_retry_is_noop(self):
-        case = self.case(); case['tag'] = SHA; case['release'] = {'draft': False}
-        result = self.preflight(case)
+    def test_publishing_requires_stable_release_of_validated_sha(self):
+        case = self.case(); case['tag'] = SHA; case['release'] = {'draft': False, 'prerelease': False}
+        result = self.preflight(case, publishing=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('"value":"true"', result.stdout)
+        for mutation in ['advanced', 'collision', 'draft', 'prerelease', 'missing-tag',
+                         'missing-release', 'different-release-sha', 'invalid-version', 'prerelease-version']:
+            changed = dict(case)
+            if mutation == 'advanced': changed['main'] = 'c' * 40
+            if mutation == 'collision': changed['tag'] = 'c' * 40
+            if mutation == 'draft': changed['release'] = {'draft': True}
+            if mutation == 'prerelease': changed['release'] = {'prerelease': True}
+            if mutation == 'missing-tag': changed.pop('tag')
+            if mutation == 'missing-release': changed.pop('release')
+            if mutation == 'different-release-sha': changed['release_sha'] = 'c' * 40
+            if mutation == 'invalid-version': changed['version'] = 'latest'
+            if mutation == 'prerelease-version': changed['version'] = 'v1.0.0-beta.1'
+            with self.subTest(mutation=mutation):
+                self.assertNotEqual(self.preflight(changed, publishing=True).returncode, 0)
 
     def publish(self, mode, loaded_id=IMAGE_ID):
-        script = dedent(blocks(RELEASE, '        run: |')[0], 10)
+        script = dedent(blocks(RELEASE.split('\n  publish:\n')[1], '        run: |')[0], 10)
         with tempfile.TemporaryDirectory() as work:
             path = Path(work)
             (path / 'validated-image.tar.gz').write_bytes(gzip.compress(b'tested image'))
@@ -125,6 +137,58 @@ print(json.load(open(sys.argv[-1]))['config']['digest'])
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_main_push_has_only_reusable_validation(self):
+        validation = (ROOT / '.github/workflows/validate.yml').read_text()
+        triggers = validation.split('\non:\n')[1].split('\npermissions:')[0]
+        self.assertIn('  push:\n    branches-ignore: [main]\n', triggers)
+        for event in ('pull_request', 'workflow_dispatch', 'workflow_call'):
+            self.assertIn(f'\n  {event}:\n', triggers)
+        release_triggers = RELEASE.split('\non:\n')[1].split('\npermissions:')[0]
+        self.assertEqual(release_triggers.strip(), 'push:\n    branches: [main]')
+        # All main commits, including version/changelog-only release PRs, must validate.
+        self.assertNotIn('paths:', release_triggers)
+        self.assertNotIn('paths-ignore:', release_triggers)
+        self.assertEqual(RELEASE.count('uses: ./.github/workflows/validate.yml'), 1)
+
+    def test_manifest_tracks_the_simple_package_version(self):
+        config = json.loads((ROOT / 'release-please-config.json').read_text())
+        manifest = json.loads((ROOT / '.release-please-manifest.json').read_text())
+        package = config['packages']['.']
+        self.assertEqual(package['release-type'], 'simple')
+        self.assertEqual(package['package-name'], 'azure-iac-toolbox')
+        self.assertFalse(package['include-component-in-tag'])
+        self.assertTrue(package['include-v-in-tag'])
+        self.assertEqual(package['changelog-path'], 'CHANGELOG.md')
+        self.assertTrue((ROOT / package['changelog-path']).is_file())
+        self.assertEqual(manifest['.'], (ROOT / 'version.txt').read_text().strip())
+        self.assertRegex(manifest['.'], r'^\d+\.\d+\.\d+$')
+        self.assertRegex(config['bootstrap-sha'], r'^[0-9a-f]{40}$')
+        self.assertNotIn('release-as', config)
+        self.assertNotIn('release-as', package)
+
+    def test_release_please_owns_versions_tags_and_releases(self):
+        release_job = RELEASE.split('\n  release-please:\n')[1].split('\n  publish:\n')[0]
+        publish_job = RELEASE.split('\n  publish:\n')[1]
+        self.assertIn('needs: validate', release_job)
+        self.assertIn("needs.validate.result == 'success'", release_job)
+        self.assertIn('googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7', release_job)
+        self.assertIn('config-file: release-please-config.json', release_job)
+        self.assertIn('manifest-file: .release-please-manifest.json', release_job)
+        self.assertIn('token: ${{ secrets.RELEASE_PLEASE_TOKEN }}', release_job)
+        self.assertIn('if [ -z "$RELEASE_PLEASE_TOKEN" ]', release_job)
+        self.assertIn("needs.release-please.outputs.release-created == 'true'", publish_job)
+        self.assertIn('RELEASE_TAG: ${{ needs.release-please.outputs.tag }}', publish_job)
+        self.assertIn('RELEASE_SHA: ${{ needs.release-please.outputs.sha }}', publish_job)
+        self.assertIn('environment: release', release_job)
+        self.assertIn('environment: release', publish_job)
+        self.assertNotIn('packages: write', release_job)
+        self.assertIn('contents: read\n      packages: write', publish_job)
+        self.assertNotIn('contents: write', publish_job)
+        self.assertNotIn('github.run_number', RELEASE)
+        self.assertNotIn('createRef', RELEASE)
+        self.assertNotIn('createRelease', RELEASE)
+        self.assertNotIn('published !=', publish_job)
+
     def test_release_reuses_scanned_main_image_without_checkout(self):
         self.assertIn("needs.validate.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'", RELEASE)
         self.assertIn('uses: ./.github/workflows/validate.yml', RELEASE)

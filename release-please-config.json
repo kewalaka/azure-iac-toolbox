@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "90b1544ee03d1e821c2eb87840ed35c2f1ff351a",
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "azure-iac-toolbox",
+      "include-component-in-tag": false,
+      "include-v-in-tag": true,
+      "changelog-path": "CHANGELOG.md"
+    }
+  }
+}
