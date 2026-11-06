@@ -2,6 +2,7 @@ name: Validate
 
 on:
   push:
+    branches-ignore: [main]
   pull_request:
   workflow_dispatch:
   workflow_call:
@@ -19,7 +20,34 @@ permissions:
 jobs:
   static:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      image-required: ${{ steps.paths.outputs.image-required }}
     steps:
+      - name: Decide whether PR changes require an image
+        id: paths
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            if (context.eventName !== 'pull_request') {
+              core.setOutput('image-required', 'true');
+              return;
+            }
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              ...context.repo, pull_number: context.issue.number, per_page: 100
+            });
+            if (files.length !== context.payload.pull_request.changed_files || files.length >= 3000) {
+              throw new Error('Incomplete PR file list; cannot safely skip image validation');
+            }
+            const inputs = new Set([
+              'Dockerfile', '.dockerignore', '.tflint.hcl',
+              'scripts/install-tools.sh', 'scripts/toolbox-check.sh',
+              'scripts/toolbox-entrypoint.sh'
+            ]);
+            core.setOutput('image-required', String(files.some(file =>
+              inputs.has(file.filename) || inputs.has(file.previous_filename))));
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check shell scripts
         run: |
@@ -59,12 +87,18 @@ jobs:
       report-ready: ${{ steps.artifact.outcome == 'success' }}
       image-id: ${{ steps.export.outputs.image-id }}
     steps:
+      - name: Report image validation not required
+        if: ${{ needs.static.outputs.image-required == 'false' }}
+        run: echo "Image validation skipped - this PR changes no image inputs. Static validation passed." >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ needs.static.outputs.image-required != 'false' }}
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: ${{ needs.static.outputs.image-required != 'false' }}
       - name: Build image without publishing
         id: build
+        if: ${{ needs.static.outputs.image-required != 'false' }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -74,6 +108,7 @@ jobs:
           tags: azure-iac-toolbox:ci
       - name: Test tools and Docker Engine
         id: smoke
+        if: ${{ needs.static.outputs.image-required != 'false' }}
         run: |
           docker run --rm azure-iac-toolbox:ci toolbox-check
           docker run --rm --privileged --volume /var/lib/docker -e TOOLBOX_DOCKER=1 azure-iac-toolbox:ci \
@@ -95,7 +130,7 @@ jobs:
           exit-code: '0'
           timeout: 15m
       - name: Write vulnerability summary and require a complete scan
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.static.outputs.image-required != 'false' }}
         env:
           SCAN_OUTCOME: ${{ steps.scan.outcome }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
