@@ -29,7 +29,7 @@ command_pid=
 # shellcheck disable=SC2317,SC2329
 cleanup() {
     if [[ -n $command_pid ]]; then
-        kill "$command_pid" 2>/dev/null || true
+        kill -- "-$command_pid" 2>/dev/null || true
         wait "$command_pid" 2>/dev/null || true
     fi
     if [[ -n $daemon_pid ]]; then
@@ -62,9 +62,8 @@ if [[ $ready != 1 ]]; then
 fi
 
 echo "Docker ready; daemon log: $log" >&2
-"$@" <&0 &
+setsid -- "$@" <&0 &
 command_pid=$!
 status=0
 wait "$command_pid" || status=$?
-command_pid=
 exit "$status"

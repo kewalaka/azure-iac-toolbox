@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Verify both AW v0.93.2 transports offline before the safe-output writer runs."""
+import filecmp
 import importlib.util
 import json
 import os
@@ -18,6 +19,20 @@ def bounded_json(path):
     if path.is_symlink() or path.stat().st_size > 1_000_000:
         raise ValueError('Invalid or oversized artifact')
     return json.loads(path.read_text())
+
+
+def verify_fallback(directory, fallback):
+    if not fallback.exists():
+        return
+    for path in fallback.rglob('*'):
+        if path.is_symlink():
+            raise ValueError('Symlink in fallback artifact')
+        if path.is_dir():
+            continue
+        original = directory / path.relative_to(fallback)
+        if (not path.is_file() or not original.is_file() or original.is_symlink()
+                or not filecmp.cmp(path, original, shallow=False)):
+            raise ValueError('Fallback artifact differs from agent artifact')
 
 
 def verify_bundle(base, directory, proposal, advice, now):
@@ -85,6 +100,7 @@ def main():
     remote = updates.run('git', 'ls-remote', 'origin', 'refs/heads/main').split()[0]
     if remote != base:
         raise ValueError('main advanced during review; rerun discovery')
+    verify_fallback(root / 'agent-bundle', root / 'agent-fallback')
     verify_bundle(base, root / 'agent-bundle', proposal, advice, datetime.now(timezone.utc))
 
 

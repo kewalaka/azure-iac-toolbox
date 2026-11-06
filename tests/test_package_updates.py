@@ -221,8 +221,25 @@ class BundleTests(unittest.TestCase):
 
     def test_unchecked_patch_fallback_rejected(self):
         _, patch_path = self.transport()
-        patch_path.write_text(patch_path.read_text().replace('ARG TERRAFORM_VERSION=1.17.1', 'ARG TERRAFORM_VERSION=1.17.2'))
+        added = f'+ARG TERRAFORM_VERSION={self.p["candidates"][0]["pin"]}'
+        patch = patch_path.read_text()
+        self.assertIn(added, patch)
+        patch_path.write_text(patch.replace(added, added + '0'))
         with self.assertRaises(ValueError): self.verify()
+
+    def test_fallback_must_match_verified_artifact(self):
+        fallback = Path(self.work.name) / 'fallback'
+        bundles.verify_fallback(self.directory, fallback)
+        fallback.mkdir()
+        for name in ('agent_output.json', 'safeoutputs.jsonl'):
+            (self.directory / name).write_text('same')
+            (fallback / name).write_text('same')
+        bundles.verify_fallback(self.directory, fallback)
+        (fallback / 'safeoutputs.jsonl').write_text('different')
+        with self.assertRaises(ValueError): bundles.verify_fallback(self.directory, fallback)
+        (fallback / 'safeoutputs.jsonl').unlink()
+        (fallback / 'unexpected').write_text('extra')
+        with self.assertRaises(ValueError): bundles.verify_fallback(self.directory, fallback)
 
     def test_multiple_transports_and_commits_rejected(self):
         bundle, _ = self.transport()

@@ -139,14 +139,34 @@ while True:
         self.assertFalse((self.work / "daemon.args").exists())
 
     def test_termination_stops_command_and_daemon(self):
-        command = "import os, pathlib, time; pathlib.Path(os.environ['MOCK_DIR'], 'job.pid').write_text(str(os.getpid())); time.sleep(30)"
+        command = """
+import os, pathlib, signal, subprocess, sys
+work = pathlib.Path(os.environ['MOCK_DIR'])
+child = subprocess.Popen([sys.executable, '-c', '''
+import os, pathlib, signal
+work = pathlib.Path(os.environ["MOCK_DIR"])
+def stop(*args):
+    (work / "child.stopped").touch()
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, stop)
+(work / "child.pid").write_text(str(os.getpid()))
+signal.pause()
+'''])
+def stop(*args):
+    child.wait(timeout=5)
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, stop)
+(work / 'job.pid').write_text(str(os.getpid()))
+signal.pause()
+"""
         with subprocess.Popen(
             ["bash", str(ENTRYPOINT), sys.executable, "-c", command],
             env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         ) as process:
             deadline = time.monotonic() + 5
-            while not (self.work / "job.pid").exists() and time.monotonic() < deadline:
+            while not (self.work / "child.pid").exists() and time.monotonic() < deadline:
                 time.sleep(0.01)
+            self.assertTrue((self.work / "child.pid").exists(), "child did not start")
             process.terminate()
             _, stderr = process.communicate(timeout=5)
             self.assertEqual(process.returncode, 143, stderr)
@@ -154,6 +174,9 @@ while True:
         pid = int((self.work / "job.pid").read_text())
         with self.assertRaises(ProcessLookupError):
             os.kill(pid, 0)
+        self.assertTrue((self.work / "child.stopped").exists())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int((self.work / "child.pid").read_text()), 0)
 
 
 if __name__ == "__main__":

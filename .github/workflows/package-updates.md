@@ -131,11 +131,19 @@ jobs:
         with:
           name: agent
           path: ${{ runner.temp }}/agent-bundle
-      - name: Reject alternate safe-output artifact
+      - name: Check for alternate safe-output artifact
+        id: fallback
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --paginate --jq '.artifacts[] | select(.name == "agent-output-fallback") | .name')" = ''
+          count=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --paginate --jq '[.artifacts[] | select(.name == "agent-output-fallback")] | length' | awk '{n += $1} END {print n+0}')
+          test "$count" -le 1
+          echo "present=$count" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.fallback.outputs.present == '1'
+        with:
+          name: agent-output-fallback
+          path: ${{ runner.temp }}/agent-fallback
       - name: Validate exact eligible pin-only diff without running agent code
         env:
           BASE_SHA: ${{ needs.discovery.outputs.base }}

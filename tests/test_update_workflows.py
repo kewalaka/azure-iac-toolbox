@@ -150,7 +150,8 @@ class ConfigurationTests(unittest.TestCase):
         writer = lock.split('\n  safe_outputs:\n')[1].split('\n  verify-proposal:\n')[0]
         self.assertIn('needs.detection.result', writer)
         self.assertIn('environment: package-updates', writer)
-        self.assertIn('agent-output-fallback', source)
+        self.assertIn('name: agent-output-fallback', source)
+        self.assertIn('verify_fallback(', (ROOT / 'scripts/verify-update-bundle.py').read_text())
         self.assertIn('allowed-files: [Dockerfile, .tflint.hcl]', source)
         self.assertIn('min-integrity: approved', source)
         self.assertIn('cli-proxy: false', source)
