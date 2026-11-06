@@ -1,0 +1,17 @@
+# Local Python and environment state
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Generated workflow artifacts
+/package-discovery.json
+/package-advice.json
+/trivy-results.json
+/image-summary.md
+/validated-image.tar.gz
+/existing.json
+/manifest-error.txt
