@@ -27,8 +27,9 @@ jobs:
     timeout-minutes: 10
     environment: release
     permissions:
-      contents: read
-      pull-requests: read
+      contents: write
+      issues: write
+      pull-requests: write
     outputs:
       release-created: ${{ steps.release.outputs.release_created }}
       tag: ${{ steps.release.outputs.tag_name }}
@@ -49,18 +50,10 @@ jobs:
             if (!prs.some(pr => pr.merged_at && pr.base.ref === 'main' && pr.merge_commit_sha === sha)) {
               throw new Error('Only a merged main PR can release; direct pushes cannot publish');
             }
-      - name: Require CI-capable release PR credentials
-        env:
-          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-        run: |
-          if [ -z "$RELEASE_PLEASE_TOKEN" ]; then
-            echo "::error::Configure RELEASE_PLEASE_TOKEN in the release environment so release PRs trigger validation"
-            exit 1
-          fi
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: release
         with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          token: ${{ github.token }}
           target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json

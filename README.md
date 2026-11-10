@@ -166,12 +166,12 @@ proposals; enable automatic head-branch deletion and delete abandoned closed
   secrets: compiler references also exist in the agent job, which must resolve
   empty. Discovery explicitly rejects mis-scoping. Do not configure generic
   `GH_AW_GITHUB_TOKEN` or `GH_AW_GITHUB_MCP_SERVER_TOKEN` overrides.
-- Create environment **`release`**, restricted to `main`; add required reviewers
-  if release creation/publication needs approval. Add **only there** secret
-  `RELEASE_PLEASE_TOKEN`: a fine-grained token limited to this repository with
-  Contents, Issues and Pull requests write. It creates release PRs, labels,
-  tags and GitHub Releases. Unlike the default `GITHUB_TOKEN`, it lets release
-  PRs trigger required validation. Do not grant branch-protection bypass.
+- Keep environment **`release`** for release creation/publication approvals.
+  Release Please uses the built-in `GITHUB_TOKEN` with Contents, Issues and Pull
+  requests write in its job only; no PAT or GitHub App is required. Enable
+  **Allow GitHub Actions to create and approve pull requests** in repository
+  Actions settings. Restricting the environment to `main` and requiring reviewers
+  are recommended hardening, not additional workflow prerequisites.
   GitHub's job token handles GHCR with Packages write only in the publishing job;
   no Docker Hub credential is needed. Set the GHCR package's visibility to public
   after its first publication if anonymous pulls are required.
@@ -199,8 +199,16 @@ squash merges with PR titles such as `feat: add a tool` (minor),
 `fix: correct startup` (patch), or `feat!: change the interface` /
 `BREAKING CHANGE:` (major). With merge commits, keep the individual commit
 messages conventional too. Release Please, not an Actions run number, chooses
-the next semantic version. Bootstrap starts at `0.0.0` and considers commits
-after `90b1544`; this is not an existing published release.
+the next semantic version. The starting version is the already published
+`v0.1.1`; bootstrap considers only commits after its tagged commit `90b1544`
+to avoid replaying the initial release history.
+
+PRs opened or updated by the built-in `GITHUB_TOKEN` do not trigger normal
+Actions runs. A **human must close and reopen each generated release PR** to
+trigger its required validation checks before merging. Repeat this after a bot
+update changes the PR head; check that the successful checks belong to the
+current head. A bot closing/reopening with `GITHUB_TOKEN` does not bypass this
+event suppression. Do not merge unchecked release PRs or bypass protections.
 
 Merging the release PR triggers validation again, then Release Please creates
 the semantic `vX.Y.Z` tag and GitHub Release. Only a newly created release enables
